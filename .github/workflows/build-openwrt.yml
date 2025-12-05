@@ -69,14 +69,14 @@ jobs:
       run: |
         echo "正在克隆源码..."
         git clone $REPO_URL openwrt-source -b $REPO_BRANCH --depth=1
-        cd openwrt-source
         echo "✅ 源码克隆完成"
       
     # 步骤4: 应用已验证的最小配置
     - name: Apply Minimal Config
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
-    
+        
         echo "应用已验证的最小配置..."
         cat > .config << 'EOF'
 # ********** 友华K1200JS最小验证配置 **********
@@ -92,7 +92,6 @@ CONFIG_TARGET_ramips_mt7621_DEVICE_generic=y
 CONFIG_TARGET_ROOTFS_PARTSIZE=128
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
 CONFIG_TARGET_ROOTFS_TARGZ=y
-
 
 # ====== 必要的基础包 ======
 # 核心工具
@@ -152,16 +151,16 @@ EOF
     # 步骤5: 更新和安装feeds（最小化）
     - name: Update and Install Feeds
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
+        
         echo "更新feeds..."
         
         # 使用最小feeds配置
-        cat > feeds.conf.default << 'EOF'
-src-git packages https://github.com/coolsnowwolf/packages.git
-src-git luci https://github.com/coolsnowwolf/luci.git
-src-git routing https://github.com/coolsnowwolf/routing.git
-src-git telephony https://github.com/coolsnowwolf/telephony.git
-EOF
+        echo "src-git packages https://github.com/coolsnowwolf/packages.git" > feeds.conf.default
+        echo "src-git luci https://github.com/coolsnowwolf/luci.git" >> feeds.conf.default
+        echo "src-git routing https://github.com/coolsnowwolf/routing.git" >> feeds.conf.default
+        echo "src-git telephony https://github.com/coolsnowwolf/telephony.git" >> feeds.conf.default
         
         ./scripts/feeds update -a
         ./scripts/feeds install -a
@@ -179,9 +178,10 @@ EOF
     # 步骤6: 生成最终配置
     - name: Generate Final Config
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
-        echo "生成最终配置..."
         
+        echo "生成最终配置..."
         make defconfig
         
         echo "✅ 配置生成完成"
@@ -196,7 +196,9 @@ EOF
     # 步骤7: 下载依赖（单线程避免问题）
     - name: Download Dependencies
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
+        
         echo "下载依赖文件（单线程）..."
         
         # 单线程下载避免网络问题
@@ -223,7 +225,9 @@ EOF
     # 步骤9: 编译固件（分阶段，单线程最稳定）
     - name: Build Firmware
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
+        
         echo "开始编译固件..."
         echo "使用单线程编译确保稳定性"
         
@@ -260,7 +264,9 @@ EOF
     # 步骤10: 调试 - 查看生成的文件
     - name: Debug Output Files
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
+        
         echo "=== 调试信息 ==="
         echo "1. bin目录结构:"
         find bin -type d 2>/dev/null | head -20
@@ -290,7 +296,9 @@ EOF
     - name: Try Youhua Device Config (可选)
       if: success()
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
+        
         echo "尝试使用友华K1200JS设备标识..."
         
         # 备份当前配置
