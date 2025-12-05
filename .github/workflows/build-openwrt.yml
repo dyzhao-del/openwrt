@@ -114,6 +114,19 @@ jobs:
         grep "CONFIG_TARGET" .config
         grep "CONFIG_PACKAGE_v2ray" .config
         echo "==================="
+
+        # 步骤5.5: 运行自定义脚本
+- name: Run Custom Script
+  run: |
+    cd openwrt-source
+    if [ -f ../diy-script.sh ]; then
+      echo "运行自定义脚本..."
+      chmod +x ../diy-script.sh
+      ../diy-script.sh
+      echo "自定义脚本执行完成"
+    else
+      echo "未找到自定义脚本，跳过"
+    fi
       
     # 步骤6: 下载依赖文件
     - name: Download Dependencies
