@@ -71,32 +71,35 @@ jobs:
         git clone $REPO_URL openwrt-source -b $REPO_BRANCH --depth=1
         echo "✅ 源码克隆完成"
       
-    # 步骤4: 应用已验证的最小配置（简化版）
+    # 步骤4: 应用已验证的最小配置
     - name: Apply Minimal Config
       run: |
-        cd openwrt-source
-        echo "应用已验证的最小配置..."
+        echo "应用友华K1200JS专用配置..."
         
-        # 创建最简单的配置文件
-        echo "# 目标平台" > .config
-        echo "CONFIG_TARGET_ramips=y" >> .config
-        echo "CONFIG_TARGET_ramips_mt7621=y" >> .config
-        echo "CONFIG_TARGET_ramips_mt7621_DEVICE_generic=y" >> .config
-        echo "# CONFIG_TARGET_ramips_mt7621_DEVICE_youhua_k1200js is not set" >> .config
-        echo "" >> .config
-        echo "# 基础设置" >> .config
-        echo "CONFIG_TARGET_ROOTFS_PARTSIZE=128" >> .config
-        echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y" >> .config
-        echo "CONFIG_TARGET_ROOTFS_TARGZ=y" >> .config
+        # 创建配置文件 - 直接使用路径
+        {
+          echo "# 友华K1200JS专用配置"
+          echo "CONFIG_TARGET_ramips=y"
+          echo "CONFIG_TARGET_ramips_mt7621=y"
+          echo "# CONFIG_TARGET_ramips_mt7621_DEVICE_generic is not set"
+          echo "CONFIG_TARGET_ramips_mt7621_DEVICE_youhua_k1200js=y"
+          echo ""
+          echo "# 基础设置"
+          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=128"
+          echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y"
+          echo "CONFIG_TARGET_ROOTFS_TARGZ=y"
+        } > openwrt-source/.config
         
         echo "✅ 配置文件已应用"
-        echo "配置摘要："
-        grep "CONFIG_TARGET" .config
+        echo "配置内容预览："
+        head -20 openwrt-source/.config
       
     # 步骤5: 更新和安装feeds
     - name: Update and Install Feeds
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
+        
         echo "更新feeds..."
         
         # 配置feeds
@@ -113,18 +116,28 @@ jobs:
     # 步骤6: 生成最终配置
     - name: Generate Final Config
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
+        
         echo "生成最终配置..."
         make defconfig
+        
         echo "✅ 配置生成完成"
+        echo "当前配置摘要："
+        grep "^CONFIG_TARGET\|^CONFIG_PACKAGE" .config | head -10
       
     # 步骤7: 下载依赖
     - name: Download Dependencies
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
+        
         echo "下载依赖文件..."
         make download -j1
+        
         echo "依赖下载完成"
+        echo "dl目录大小："
+        du -sh dl/ 2>/dev/null || echo "dl目录不存在"
       
     # 步骤8: 设置交换空间
     - name: Setup Swap Space
@@ -134,20 +147,31 @@ jobs:
         sudo chmod 600 /swapfile
         sudo mkswap /swapfile
         sudo swapon /swapfile
+        
         echo "✅ 交换空间设置完成"
+        echo "当前内存状态："
+        free -h
       
     # 步骤9: 编译固件
     - name: Build Firmware
       run: |
+        echo "进入openwrt-source目录..."
         cd openwrt-source
+        
         echo "开始编译固件..."
         make -j1 V=s 2>&1 | tee build.log
         
+        # 检查编译结果
         if [ -d bin/targets ]; then
           echo "✅ 编译成功！"
+          echo "=== 生成的固件文件 ==="
+          find bin/targets -type f \( -name "*.bin" -o -name "*.img*" \) 2>/dev/null | xargs ls -lh 2>/dev/null || echo "未找到固件文件"
+          echo "======================"
         else
           echo "❌ 编译失败！"
-          tail -100 build.log | grep -i error
+          echo "=== 最后50行错误信息 ==="
+          tail -50 build.log
+          echo "========================"
           exit 1
         fi
       
