@@ -76,10 +76,10 @@ jobs:
     - name: Apply Minimal Config
       run: |
         cd openwrt-source
-        
+    
         echo "应用已验证的最小配置..."
         cat > .config << 'EOF'
-# ====== 友华K1200JS最小验证配置 ======
+# ********** 友华K1200JS最小验证配置 **********
 
 # 目标平台
 CONFIG_TARGET_ramips=y
