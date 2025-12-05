@@ -13,7 +13,7 @@ on:
     - cron: '0 18 * * *'
 
 env:
-  REPO_URL: "https://bgithub.xyz/coolsnowwolf/lede.git"
+  REPO_URL: "https://github.com/coolsnowwolf/lede.git"
   REPO_BRANCH: "master"
   FIRMWARE_NAME: "openwrt-ramips-mt7621-yh_k1200js"
 
