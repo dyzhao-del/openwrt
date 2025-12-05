@@ -6,9 +6,9 @@ src-git telephony https://github.com/openwrt/telephony.git
 
 # 第三方源（包含V2ray）
 src-git helloworld https://github.com/fw876/helloworld.git
-src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall.git;packages
-src-git passwall_luci https://github.com/xiaorouji/openwrt-passwall.git;luci
+#src-git passwall_packages https://github.com/xiaorouji/openwrt-passwall.git;packages
+#src-git passwall_luci https://github.com/xiaorouji/openwrt-passwall.git;luci
 
 # 如果需要更多插件
-src-git small https://github.com/kenzok8/small.git
-src-git small8 https://github.com/kenzok8/small-package.git
+#src-git small https://github.com/kenzok8/small.git
+#src-git small8 https://github.com/kenzok8/small-package.git
