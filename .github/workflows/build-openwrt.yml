@@ -14,7 +14,7 @@ on:
 
 env:
   # 使用Lean's LEDE源码
-  REPO_URL: "https://github.com/coolsnowwolf/lede.git"
+  REPO_URL: "https://bgithub.xyz/coolsnowwolf/lede.git"
   REPO_BRANCH: "master"
   FIRMWARE_NAME: "openwrt-youhua-k1200js"
 
@@ -92,7 +92,7 @@ CONFIG_TARGET_ramips_mt7621_DEVICE_generic=y
 CONFIG_TARGET_ROOTFS_PARTSIZE=128
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
 CONFIG_TARGET_ROOTFS_TARGZ=y
-EOF
+
 
 # ====== 必要的基础包 ======
 # 核心工具
