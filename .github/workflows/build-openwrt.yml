@@ -14,7 +14,7 @@ on:
 
 env:
   # 使用Lean's LEDE源码
-  REPO_URL: "https://bgithub.xyz/coolsnowwolf/lede.git"
+  REPO_URL: "https://github.com/coolsnowwolf/lede.git"
   REPO_BRANCH: "master"
   FIRMWARE_NAME: "openwrt-youhua-k1200js"
 
