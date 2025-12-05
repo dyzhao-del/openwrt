@@ -13,7 +13,7 @@ on:
     - cron: '0 18 * * *'
 
 env:
-  REPO_URL: "https://github.com/coolsnowwolf/lede.git"
+  REPO_URL: "https://bgithub.xyz/coolsnowwolf/lede.git"
   REPO_BRANCH: "master"
   FIRMWARE_NAME: "openwrt-ramips-mt7621-yh_k1200js"
 
@@ -123,14 +123,36 @@ jobs:
         
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
+
+    - name: Check System Resources
+      run: |
+        echo "系统内存："
+        free -h
+        echo "CPU核心数："
+        nproc
+        echo "磁盘空间："
+        df -h .    
+
       
     - name: Build Firmware
       run: |
-        cd openwrt-source
-        echo "开始编译固件..."
-        echo "编译时间可能较长，请耐心等待..."
+       cd openwrt-source
+       echo "开始编译固件..."
+       echo "使用保守编译策略（单线程）避免内存问题"
+       
+       echo "设置2GB交换空间..."
+       sudo fallocate -l 2G /swapfile
+       sudo chmod 600 /swapfile
+       sudo mkswap /swapfile
+       sudo swapon /swapfile
+       echo "当前内存状态："
+       free -h
         
-        make -j$(($(nproc) + 1)) V=s 2>&1 | tee build.log
+        echo "阶段1：编译工具链..."
+        make tools/compile -j1 V=s
+        
+        echo "编译固件（单线程）..."
+        make -j1 V=s 2>&1 | tee build.log
         
         if [ -d bin/targets ]; then
           echo "编译成功！"
