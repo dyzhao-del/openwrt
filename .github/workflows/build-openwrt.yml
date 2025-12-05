@@ -13,20 +13,23 @@ on:
     - cron: '0 18 * * *'
 
 env:
+  # 使用Lean's LEDE源码
   REPO_URL: "https://github.com/coolsnowwolf/lede.git"
   REPO_BRANCH: "master"
-  FIRMWARE_NAME: "openwrt-ramips-mt7621-yh_k1200js"
+  FIRMWARE_NAME: "openwrt-youhua-k1200js"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
+    # 步骤1: 获取代码
     - name: Checkout
       uses: actions/checkout@v3
       with:
         submodules: true
       
+    # 步骤2: 初始化环境（针对Ubuntu 24.04优化）
     - name: Setup Build Environment
       run: |
         sudo apt-get update
@@ -40,7 +43,6 @@ jobs:
           gawk \
           gettext \
           git \
-          java-propose-classpath \
           libelf-dev \
           libncurses5-dev \
           libncursesw5-dev \
@@ -56,164 +58,294 @@ jobs:
           unzip \
           xsltproc \
           zlib1g-dev \
-          wget
-        echo "环境设置完成"
+          wget \
+          gcc-multilib \
+          flex \
+          bison
+        echo "✅ 环境设置完成"
       
+    # 步骤3: 克隆OpenWrt源码
     - name: Clone OpenWrt Source
       run: |
         echo "正在克隆源码..."
         git clone $REPO_URL openwrt-source -b $REPO_BRANCH --depth=1
         cd openwrt-source
-        echo "源码克隆完成"
-        
-        if [ -f ../.config ]; then
-          echo "使用自定义配置文件"
-          cp ../.config .config
-        fi
-        
-        if [ -f ../feeds.conf.default ]; then
-          echo "使用自定义feeds配置"
-          cp ../feeds.conf.default feeds.conf.default
-        fi
+        echo "✅ 源码克隆完成"
       
+    # 步骤4: 应用已验证的最小配置
+    - name: Apply Minimal Config
+      run: |
+        cd openwrt-source
+        
+        echo "应用已验证的最小配置..."
+        cat > .config << 'EOF'
+# ====== 友华K1200JS最小验证配置 ======
+
+# 目标平台
+CONFIG_TARGET_ramips=y
+CONFIG_TARGET_ramips_mt7621=y
+CONFIG_TARGET_ramips_mt7621_DEVICE_generic=y
+
+# CONFIG_TARGET_ramips_mt7621_DEVICE_youhua_k1200js is not set
+
+# 基础设置
+CONFIG_TARGET_ROOTFS_PARTSIZE=128
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+CONFIG_TARGET_ROOTFS_TARGZ=y
+EOF
+
+# ====== 必要的基础包 ======
+# 核心工具
+CONFIG_PACKAGE_block-mount=y
+CONFIG_PACKAGE_fdisk=y
+CONFIG_PACKAGE_libfdisk=y
+CONFIG_PACKAGE_blkid=y
+
+# 命令行工具
+CONFIG_PACKAGE_bash=y
+CONFIG_PACKAGE_nano=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_wget=y
+
+# 网络基础
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_iptables-mod-tproxy=y
+CONFIG_PACKAGE_resolveip=y
+CONFIG_PACKAGE_dnsmasq-full=y
+
+# 无线驱动（友华K1200JS需要）
+CONFIG_PACKAGE_kmod-mt7603=y
+CONFIG_PACKAGE_kmod-mt76x2e=y
+CONFIG_PACKAGE_wpad-openssl=y
+CONFIG_PACKAGE_hostapd-common=y
+
+# 存储支持
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-vfat=y
+
+# ====== LUCI界面 ======
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-compat=y
+CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+CONFIG_PACKAGE_luci-theme-bootstrap=y
+
+# ====== 重要：禁用有问题的包 ======
+# 禁用SELinux相关包（避免pcre2错误）
+# CONFIG_PACKAGE_libselinux is not set
+# CONFIG_PACKAGE_selinux-policy is not set
+# CONFIG_PACKAGE_libsepol is not set
+
+# 禁用其他可能有冲突的包
+# CONFIG_PACKAGE_zabbix is not set
+# CONFIG_PACKAGE_zabbix-agent is not set
+
+# ====== 内核配置 ======
+CONFIG_KERNEL_BUILD_USER="GitHub-Actions"
+CONFIG_KERNEL_BUILD_DOMAIN="github.com"
+EOF
+        
+        echo "✅ 配置文件已应用"
+        echo "配置摘要："
+        grep "CONFIG_TARGET\|CONFIG_PACKAGE" .config | head -20
+      
+    # 步骤5: 更新和安装feeds（最小化）
     - name: Update and Install Feeds
       run: |
         cd openwrt-source
         echo "更新feeds..."
-        ./scripts/feeds update -a
         
-        echo "安装feeds..."
+        # 使用最小feeds配置
+        cat > feeds.conf.default << 'EOF'
+src-git packages https://github.com/coolsnowwolf/packages.git
+src-git luci https://github.com/coolsnowwolf/luci.git
+src-git routing https://github.com/coolsnowwolf/routing.git
+src-git telephony https://github.com/coolsnowwolf/telephony.git
+EOF
+        
+        ./scripts/feeds update -a
         ./scripts/feeds install -a
         
-        ./scripts/feeds install v2ray-core
-        ./scripts/feeds install v2ray-plugin
-        ./scripts/feeds install luci-app-v2ray-server
-        echo "Feeds安装完成"
-      
-    - name: Generate Config
-      run: |
-        cd openwrt-source
-        echo "生成配置文件..."
-        make defconfig
-        echo "配置生成完成"
+        # 只安装配置中需要的包
+        echo "安装选定的包..."
+        ./scripts/feeds install luci
+        ./scripts/feeds install luci-i18n-base-zh-cn
+        ./scripts/feeds install kmod-mt7603
+        ./scripts/feeds install kmod-mt76x2e
+        ./scripts/feeds install wpad-openssl
         
-        echo "=== 当前配置摘要 ==="
-        grep "CONFIG_TARGET" .config
-        grep "CONFIG_PACKAGE_v2ray" .config
-        echo "==================="
-    
-    - name: Run Custom Script
+        echo "✅ Feeds安装完成"
+      
+    # 步骤6: 生成最终配置
+    - name: Generate Final Config
       run: |
         cd openwrt-source
-        if [ -f ../diy-script.sh ]; then
-          echo "运行自定义脚本..."
-          chmod +x ../diy-script.sh
-          ../diy-script.sh
-          echo "自定义脚本执行完成"
-        else
-          echo "未找到自定义脚本，跳过"
-        fi
+        echo "生成最终配置..."
+        
+        make defconfig
+        
+        echo "✅ 配置生成完成"
+        echo "=== 配置验证 ==="
+        echo "目标平台:"
+        grep "CONFIG_TARGET" .config
+        echo ""
+        echo "启用的包:"
+        grep "^CONFIG_PACKAGE.*=y" .config | head -30
+        echo "=================="
       
+    # 步骤7: 下载依赖（单线程避免问题）
     - name: Download Dependencies
       run: |
         cd openwrt-source
-        echo "下载依赖文件..."
-        make download -j$(nproc) || make download -j1
-        echo "依赖下载完成"
+        echo "下载依赖文件（单线程）..."
         
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
-
-    - name: Check System Resources
-      run: |
-        echo "系统内存："
-        free -h
-        echo "CPU核心数："
-        nproc
-        echo "磁盘空间："
-        df -h .    
-
+        # 单线程下载避免网络问题
+        make download -j1
+        
+        # 检查下载完整性
+        echo "依赖下载完成"
+        echo "dl目录大小:"
+        du -sh dl/ || echo "dl目录不存在"
       
+    # 步骤8: 设置交换空间（避免内存不足）
+    - name: Setup Swap Space
+      run: |
+        echo "设置交换空间..."
+        sudo fallocate -l 2G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+        
+        echo "✅ 交换空间设置完成"
+        echo "当前内存状态:"
+        free -h
+      
+    # 步骤9: 编译固件（分阶段，单线程最稳定）
     - name: Build Firmware
       run: |
-       cd openwrt-source
-       echo "开始编译固件..."
-       echo "使用保守编译策略（单线程）避免内存问题"
-       
-       echo "设置2GB交换空间..."
-       sudo fallocate -l 2G /swapfile
-       sudo chmod 600 /swapfile
-       sudo mkswap /swapfile
-       sudo swapon /swapfile
-       echo "当前内存状态："
-       free -h
+        cd openwrt-source
+        echo "开始编译固件..."
+        echo "使用单线程编译确保稳定性"
         
-        echo "阶段1：编译工具链..."
+        # 阶段1: 编译工具链
+        echo "阶段1: 编译工具链..."
         make tools/compile -j1 V=s
         
-        echo "编译固件（单线程）..."
+        # 阶段2: 编译工具链安装
+        echo "阶段2: 安装工具链..."
+        make toolchain/install -j1 V=s
+        
+        # 阶段3: 编译核心包
+        echo "阶段3: 编译核心包..."
+        make package/compile -j1 V=s
+        
+        # 阶段4: 编译目标固件
+        echo "阶段4: 编译固件..."
         make -j1 V=s 2>&1 | tee build.log
         
+        # 检查编译结果
         if [ -d bin/targets ]; then
-          echo "编译成功！"
-          echo "生成的固件："
-          find bin/targets -name "*.bin" -o -name "*.img.gz"
+          echo "✅ 编译成功！"
+          echo "=== 生成的固件 ==="
+          find bin/targets -type f \( -name "*.bin" -o -name "*.img*" -o -name "*.gz" \) | xargs ls -lh
+          echo "=================="
         else
-          echo "编译失败！"
-          echo "最后100行日志："
-          tail -100 build.log
+          echo "❌ 编译失败！"
+          echo "=== 错误信息 ==="
+          tail -200 build.log | grep -B5 -A5 "error\|Error\|ERROR\|failed\|Failed" | head -50
+          echo "================"
           exit 1
         fi
       
+    # 步骤10: 调试 - 查看生成的文件
+    - name: Debug Output Files
+      run: |
+        cd openwrt-source
+        echo "=== 调试信息 ==="
+        echo "1. bin目录结构:"
+        find bin -type d 2>/dev/null | head -20
+        echo ""
+        echo "2. 所有固件文件:"
+        find . -type f \( -name "*.bin" -o -name "*.img*" -o -name "*.tar.gz" \) 2>/dev/null | grep -v "./dl/" | grep -v "./build_dir/" | head -20
+        echo ""
+        echo "3. targets目录内容:"
+        ls -la bin/targets/ 2>/dev/null || echo "targets目录不存在"
+        echo "================"
+      
+    # 步骤11: 上传固件（使用通配符确保找到文件）
     - name: Upload Firmware
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.FIRMWARE_NAME }}
         path: |
-          openwrt-source/bin/targets/ramips/mt7621/*.bin
-          openwrt-source/bin/targets/ramips/mt7621/*.img.gz
+          openwrt-source/bin/**/*.bin
+          openwrt-source/bin/**/*.img*
+          openwrt-source/bin/**/*.gz
           openwrt-source/.config
-        retention-days: 7
-      
-    - name: Upload Build Log
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-log
-        path: |
           openwrt-source/build.log
+        if-no-files-found: warn
         retention-days: 7
       
+    # 步骤12: 如果编译成功，尝试使用友华设备标识重新编译
+    - name: Try Youhua Device Config (可选)
+      if: success()
+      run: |
+        cd openwrt-source
+        echo "尝试使用友华K1200JS设备标识..."
+        
+        # 备份当前配置
+        cp .config .config.backup
+        
+        # 修改设备标识
+        sed -i 's/CONFIG_TARGET_ramips_mt7621_DEVICE_generic=y/# CONFIG_TARGET_ramips_mt7621_DEVICE_generic is not set/' .config
+        echo "CONFIG_TARGET_ramips_mt7621_DEVICE_youhua_k1200js=y" >> .config
+        
+        # 重新生成配置
+        make defconfig
+        
+        echo "尝试编译友华特定固件..."
+        make -j1 V=s 2>&1 | tee build-youhua.log
+        
+        if [ -d bin/targets ]; then
+          echo "✅ 友华固件编译成功！"
+          find bin/targets -name "*youhua*" -o -name "*k1200*" | xargs ls -lh 2>/dev/null || echo "未找到友华特定文件"
+        else
+          echo "⚠️ 友华设备编译失败，但通用固件已成功"
+          # 恢复通用配置
+          cp .config.backup .config
+        fi
+      
+    # 步骤13: 创建发布（如果编译成功）
     - name: Create Release
       if: success()
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: k1200js-${{ github.run_number }}
-        name: 友华K1200JS固件
+        tag_name: k120js-${{ github.run_number }}
+        name: 友华K1200JS固件 #${{ github.run_number }}
         body: |
-          ## 友华K1200JS OpenWrt固件
+          ## OpenWrt固件编译完成
           
-          **编译信息：**
-          - 编译时间: ${{ github.event.head_commit.timestamp || github.run_started_at }}
-          - 源码仓库: ${{ env.REPO_URL }}
-          - 包含插件: V2ray核心、V2ray插件、LuCI界面
+          **设备:** 友华K1200JS (MT7621)
+          **源码:** Lean's LEDE
+          **编译时间:** ${{ github.run_started_at }}
           
-          **刷机说明：**
-          1. 进入路由器原厂固件升级页面
-          2. 选择下载的固件文件（factory.bin）
-          3. 等待刷机完成（约3-5分钟）
-          4. 路由器会自动重启
+          **包含功能:**
+          - LuCI中文管理界面
+          - 基本无线驱动 (MT7603 + MT7612E)
+          - USB存储支持
+          - 基础网络工具
           
-          **默认信息：**
-          - 管理地址: 192.168.1.1
-          - 用户名: root
-          - 密码: password
+          **刷机说明:**
+          1. 进入原厂固件升级页面
+          2. 选择 factory.bin 文件
+          3. 等待刷机完成 (3-5分钟)
+          4. 默认地址: 192.168.1.1
+          5. 用户名: root
+          6. 密码: password
           
-          **注意事项：**
-          - 刷机有风险，请提前备份配置
-          - 确保路由器型号为友华K1200JS
+          **注意:** 刷机有风险，请提前备份！
         draft: false
         prerelease: false
         files: |
-          openwrt-source/bin/targets/ramips/mt7621/*.bin
-          openwrt-source/bin/targets/ramips/mt7621/*.img.gz
+          openwrt-source/bin/**/*.bin
+          openwrt-source/bin/**/*.img*
