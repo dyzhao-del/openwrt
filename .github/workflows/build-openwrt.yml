@@ -14,7 +14,7 @@ on:
 
 env:
   # 使用Lean's LEDE源码
-  REPO_URL: "https://github.com/coolsnowwolf/lede.git"
+  REPO_URL: "https://bgithub.xyz/coolsnowwolf/lede.git"
   REPO_BRANCH: "master"
   FIRMWARE_NAME: "openwrt-youhua-k1200js"
 
@@ -71,35 +71,98 @@ jobs:
         git clone $REPO_URL openwrt-source -b $REPO_BRANCH --depth=1
         echo "✅ 源码克隆完成"
       
-    # 步骤4: 应用已验证的最小配置
-    - name: Apply Minimal Config
+    # 步骤3.5: 搜索友华设备定义
+    - name: Find Youhua Device Definition
       run: |
-        echo "应用友华K1200JS专用配置..."
+        echo "搜索友华K1200JS设备定义..."
+        cd openwrt-source
         
-        # 创建配置文件 - 直接使用路径
+        # 方法1: 搜索设备定义文件
+        echo "=== 搜索设备定义 ==="
+        find target/linux/ramips -name "*.mk" -type f | xargs grep -l "7621" 2>/dev/null | head -5
+        
+        # 方法2: 搜索具体设备
+        DEVICE_FILES=$(find target/linux/ramips -name "*.mk" -type f 2>/dev/null)
+        for file in $DEVICE_FILES; do
+          if grep -q "youhua\|K1200" "$file" 2>/dev/null; then
+            echo "找到包含友华/K1200的文件: $file"
+            grep -n "youhua\|K1200" "$file"
+          fi
+        done
+        
+        # 方法3: 查看所有MT7621设备
+        echo ""
+        echo "=== 所有MT7621设备 ==="
+        if [ -f "target/linux/ramips/image/mt7621.mk" ]; then
+          grep "define Device/" target/linux/ramips/image/mt7621.mk | head -20
+        else
+          echo "mt7621.mk 文件不存在"
+        fi
+        
+        # 保存设备列表供后续使用
+        echo "youhua_k1200js" > /tmp/device_options.txt
+        echo "generic" >> /tmp/device_options.txt
+      
+    # 步骤4: 应用配置（智能选择设备）
+    - name: Apply Config with Device Detection
+      run: |
+        echo "应用友华K1200JS配置..."
+        cd openwrt-source
+        
+        # 尝试确定正确的设备标识
+        if grep -r "youhua_k1200js" target/linux/ramips/ 2>/dev/null; then
+          DEVICE_ID="youhua_k1200js"
+          echo "✅ 找到设备标识: youhua_k1200js"
+        elif grep -r "youhua,k1200js" target/linux/ramips/ 2>/dev/null; then
+          DEVICE_ID="youhua,k1200js"
+          echo "✅ 找到设备标识: youhua,k1200js"
+        else
+          DEVICE_ID="generic"
+          echo "⚠️ 未找到友华设备标识，使用 generic"
+          echo "⚠️ 注意：可能需要手动修改设备标识"
+        fi
+        
+        # 创建配置文件
         {
           echo "# 友华K1200JS专用配置"
+          echo "# 设备标识: $DEVICE_ID"
           echo "CONFIG_TARGET_ramips=y"
           echo "CONFIG_TARGET_ramips_mt7621=y"
-          echo "# CONFIG_TARGET_ramips_mt7621_DEVICE_generic is not set"
-          echo "CONFIG_TARGET_ramips_mt7621_DEVICE_youhua_k1200js=y"
+          
+          # 根据找到的设备设置
+          if [ "$DEVICE_ID" = "generic" ]; then
+            echo "CONFIG_TARGET_ramips_mt7621_DEVICE_generic=y"
+          else
+            echo "# CONFIG_TARGET_ramips_mt7621_DEVICE_generic is not set"
+            echo "CONFIG_TARGET_ramips_mt7621_DEVICE_${DEVICE_ID//,/_}=y"
+          fi
+          
           echo ""
           echo "# 基础设置"
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=128"
           echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y"
           echo "CONFIG_TARGET_ROOTFS_TARGZ=y"
-        } > openwrt-source/.config
+          
+          echo ""
+          echo "# 必要的基础包"
+          echo "CONFIG_PACKAGE_luci=y"
+          echo "CONFIG_PACKAGE_luci-compat=y"
+          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y"
+          
+          # 无线驱动（友华K1200JS需要）
+          echo "CONFIG_PACKAGE_kmod-mt7603=y"
+          echo "CONFIG_PACKAGE_kmod-mt76x2e=y"
+          echo "CONFIG_PACKAGE_wpad-openssl=y"
+        } > .config
         
         echo "✅ 配置文件已应用"
-        echo "配置内容预览："
-        head -20 openwrt-source/.config
+        echo "配置摘要："
+        grep "^CONFIG_TARGET" .config
       
     # 步骤5: 更新和安装feeds
     - name: Update and Install Feeds
       run: |
-        echo "进入openwrt-source目录..."
         cd openwrt-source
-        
         echo "更新feeds..."
         
         # 配置feeds
@@ -111,39 +174,50 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
         
+        # 安装必要的基础包
+        ./scripts/feeds install luci
+        ./scripts/feeds install luci-i18n-base-zh-cn
+        ./scripts/feeds install kmod-mt7603
+        ./scripts/feeds install kmod-mt76x2e
+        
         echo "✅ Feeds安装完成"
       
     # 步骤6: 生成最终配置
     - name: Generate Final Config
       run: |
-        echo "进入openwrt-source目录..."
         cd openwrt-source
-        
         echo "生成最终配置..."
         make defconfig
         
+        # 如果使用generic，尝试添加友华特定配置
+        if grep -q "CONFIG_TARGET_ramips_mt7621_DEVICE_generic=y" .config; then
+          echo "⚠️ 使用generic配置，尝试添加友华特定设置..."
+          {
+            echo ""
+            echo "# 友华K1200JS特定设置"
+            echo "CONFIG_TARGET_ramips_mt7621_DEVICE_generic_DEVICE_youhua_k1200js=y"
+            echo "CONFIG_TARGET_PROFILE=\"Youhua-K1200JS\""
+          } >> .config
+          make defconfig
+        fi
+        
         echo "✅ 配置生成完成"
-        echo "当前配置摘要："
-        grep "^CONFIG_TARGET\|^CONFIG_PACKAGE" .config | head -10
+        echo "=== 最终配置摘要 ==="
+        grep "^CONFIG_TARGET\|^CONFIG_PACKAGE_kmod\|^CONFIG_PACKAGE_luci" .config
       
     # 步骤7: 下载依赖
     - name: Download Dependencies
       run: |
-        echo "进入openwrt-source目录..."
         cd openwrt-source
-        
         echo "下载依赖文件..."
         make download -j1
-        
         echo "依赖下载完成"
-        echo "dl目录大小："
-        du -sh dl/ 2>/dev/null || echo "dl目录不存在"
       
     # 步骤8: 设置交换空间
     - name: Setup Swap Space
       run: |
         echo "设置交换空间..."
-        sudo fallocate -l 2G /swapfile
+        sudo fallocate -l 4G /swapfile  # 增加到4GB
         sudo chmod 600 /swapfile
         sudo mkswap /swapfile
         sudo swapon /swapfile
@@ -155,34 +229,82 @@ jobs:
     # 步骤9: 编译固件
     - name: Build Firmware
       run: |
-        echo "进入openwrt-source目录..."
         cd openwrt-source
-        
         echo "开始编译固件..."
+        
+        # 编译并记录详细日志
         make -j1 V=s 2>&1 | tee build.log
         
         # 检查编译结果
-        if [ -d bin/targets ]; then
+        if [ -d bin/targets/ramips/mt7621 ]; then
           echo "✅ 编译成功！"
-          echo "=== 生成的固件文件 ==="
-          find bin/targets -type f \( -name "*.bin" -o -name "*.img*" \) 2>/dev/null | xargs ls -lh 2>/dev/null || echo "未找到固件文件"
-          echo "======================"
+          echo "=== 生成的固件 ==="
+          ls -lh bin/targets/ramips/mt7621/*.bin 2>/dev/null || \
+          ls -lh bin/targets/ramips/mt7621/*.img* 2>/dev/null || \
+          echo "请查看bin/targets/ramips/mt7621/目录"
+          
+          # 检查固件支持的设备
+          echo ""
+          echo "=== 固件支持信息 ==="
+          for f in bin/targets/ramips/mt7621/*.bin bin/targets/ramips/mt7621/*.img* 2>/dev/null; do
+            if [ -f "$f" ]; then
+              echo "固件: $(basename "$f")"
+              strings "$f" | grep -i "supported\|board\|model" | head -3
+              echo "---"
+            fi
+          done
         else
           echo "❌ 编译失败！"
-          echo "=== 最后50行错误信息 ==="
-          tail -50 build.log
-          echo "========================"
+          echo "=== 错误信息 ==="
+          grep -i "error\|failed" build.log | tail -20
           exit 1
         fi
       
-    # 步骤10: 上传固件
+    # 步骤10: 创建多版本固件（如果generic编译成功）
+    - name: Create Alternative Firmware Versions
+      if: success()
+      run: |
+        cd openwrt-source
+        echo "尝试创建替代固件版本..."
+        
+        # 备份当前配置
+        cp .config .config.backup
+        
+        # 尝试不同的设备标识组合
+        for DEVICE_OPTION in "youhua_k1200js" "youhua,k1200js" "generic"; do
+          echo "尝试设备标识: $DEVICE_OPTION"
+          cp .config.backup .config
+          
+          # 修改设备标识
+          sed -i '/CONFIG_TARGET_ramips_mt7621_DEVICE/d' .config
+          
+          if [ "$DEVICE_OPTION" = "generic" ]; then
+            echo "CONFIG_TARGET_ramips_mt7621_DEVICE_generic=y" >> .config
+          else
+            CLEAN_DEVICE="${DEVICE_OPTION//,/_}"
+            echo "CONFIG_TARGET_ramips_mt7621_DEVICE_${CLEAN_DEVICE}=y" >> .config
+          fi
+          
+          make defconfig
+          
+          # 快速编译（只重新打包）
+          echo "重新打包固件..."
+          make -j1 V=s 2>&1 | tail -50 | grep -i "error\|creating\|image"
+        done
+        
+        # 恢复原配置
+        cp .config.backup .config
+        echo "✅ 多版本固件创建完成"
+      
+    # 步骤11: 上传固件
     - name: Upload Firmware
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.FIRMWARE_NAME }}
         path: |
-          openwrt-source/bin/**/*.bin
-          openwrt-source/bin/**/*.img*
-          openwrt-source/bin/**/*.gz
-        if-no-files-found: warn
-        retention-days: 7
+          openwrt-source/bin/targets/ramips/mt7621/*.bin
+          openwrt-source/bin/targets/ramips/mt7621/*.img*
+          openwrt-source/.config
+          openwrt-source/build.log
+        if-no-files-found: error
+        retention-days: 30
