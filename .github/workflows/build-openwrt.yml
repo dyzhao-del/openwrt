@@ -142,7 +142,7 @@ jobs:
         fi
       
     - name: Upload Firmware
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ env.FIRMWARE_NAME }}
         path: |
@@ -153,7 +153,7 @@ jobs:
       
     - name: Upload Build Log
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: build-log
         path: |
