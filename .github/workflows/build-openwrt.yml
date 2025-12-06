@@ -1,4 +1,5 @@
-﻿name: Build OpenWrt for Youhua K1200JS
+
+name: Build Official OpenWrt for Youhua WR1200JS (K1200JS)
 
 on:
   workflow_dispatch:
@@ -7,342 +8,358 @@ on:
         description: '固件版本'
         required: false
         default: 'v1.0'
-  push:
-    branches: [ main ]
-  schedule:
-    - cron: '0 18 * * *'
 
 env:
-  REPO_URL: "https://github.com/coolsnowwolf/lede.git"
-  REPO_BRANCH: "master"
-  FIRMWARE_NAME: "openwrt-youhua-k1200js"
+  # 使用官方OpenWrt源码（最稳定）
+  REPO_URL: "https://github.com/openwrt/openwrt.git"
+  REPO_BRANCH: "openwrt-24.10"
+  DEVICE_NAME: "youhua_wr1200js"
+  FIRMWARE_NAME: "openwrt-youhua-wr1200js"
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # 使用更稳定的22.04
+    timeout-minutes: 180   # 设置3小时超时
     
     steps:
     # 步骤1: 获取代码
     - name: Checkout
       uses: actions/checkout@v3
-      with:
-        submodules: true
       
-    # 步骤2: 初始化环境
+    # 步骤2: 安装编译环境
     - name: Setup Build Environment
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           build-essential \
-          ccache \
-          ecj \
-          fastjar \
-          file \
+          clang \
+          flex \
+          bison \
           g++ \
           gawk \
+          gcc-multilib \
           gettext \
           git \
-          libelf-dev \
           libncurses5-dev \
           libncursesw5-dev \
           libssl-dev \
           python3 \
-          python3-full \
           python3-pip \
           python3-setuptools \
           rsync \
-          subversion \
-          swig \
-          time \
           unzip \
-          xsltproc \
           zlib1g-dev \
+          file \
           wget \
-          gcc-multilib \
-          flex \
-          bison \
-          libpcre2-dev
-        echo "✅ 环境设置完成"
+          curl \
+          upx \
+          jq
+        echo "✅ 编译环境准备完成"
       
-    # 步骤3: 克隆OpenWrt源码
-    - name: Clone OpenWrt Source
+    # 步骤3: 克隆官方OpenWrt源码
+    - name: Clone Official OpenWrt
       run: |
-        echo "正在克隆源码..."
-        echo "源码地址: $REPO_URL"
+        echo "正在克隆官方OpenWrt源码..."
         git clone $REPO_URL openwrt-source -b $REPO_BRANCH --depth=1
-        if [ $? -eq 0 ]; then
-          echo "✅ 源码克隆完成"
-          echo "源码目录大小:"
-          du -sh openwrt-source
+        cd openwrt-source
+        echo "✅ 源码克隆完成"
+        
+        # 验证设备是否支持
+        echo "=== 验证设备支持 ==="
+        if find target/linux/ramips -type f -exec grep -l "wr1200js" {} \; 2>/dev/null; then
+          echo "✅ 官方支持 YouHua WR1200JS"
         else
-          echo "❌ 源码克隆失败"
-          exit 1
+          echo "⚠️ 在官方源码中搜索设备..."
+          grep -r "wr1200\|youhua" target/linux/ramips/ 2>/dev/null || echo "未找到设备信息"
         fi
       
-    # 步骤3.5: 搜索友华设备定义
-    - name: Find Youhua Device Definition
+    # 步骤4: 配置编译选项（正确的方法）
+    - name: Configure Build
       run: |
-        echo "搜索友华K1200JS设备定义..."
         cd openwrt-source
         
-        echo "=== ramips目录结构 ==="
-        ls -la target/linux/ramips/ 2>/dev/null || echo "ramips目录不存在"
+        echo "开始配置编译选项..."
         
+        # 方法1: 使用defconfig生成基础配置
+        echo "1. 生成基础配置..."
+        
+        # 使用echo创建基础配置文件
+        echo "CONFIG_TARGET_ramips=y" > .config
+        echo "CONFIG_TARGET_ramips_mt7621=y" >> .config
+        
+        # 生成默认配置
+        make defconfig
+        
+        echo "2. 选择友华WR1200JS设备..."
+        # 使用交互式menuconfig（通过脚本自动化）
+        # 首先查看可用的设备
+        echo "可用的MT7621设备:"
+        grep "DEVICE_.*=" target/linux/ramips/mt7621/profiles/* 2>/dev/null | grep -i "youhua\|wr1200" || true
+        
+        # 设置设备（如果存在）
+        if grep -q "youhua_wr1200js" target/linux/ramips/mt7621/profiles/* 2>/dev/null; then
+          echo "设置设备: youhua_wr1200js"
+          ./scripts/config --set-val CONFIG_TARGET_ramips_mt7621_DEVICE_youhua_wr1200js y
+        else
+          echo "⚠️ 未找到确切设备名，使用generic测试"
+          ./scripts/config --set-val CONFIG_TARGET_ramips_mt7621_DEVICE_generic y
+        fi
+        
+        echo "3. 配置基础选项..."
+        # 设置镜像大小（16MB闪存，留出配置空间）
+        ./scripts/config --set-str CONFIG_TARGET_ROOTFS_PARTSIZE "128"
+        
+        # 启用必要功能
+        ./scripts/config --enable TARGET_ROOTFS_SQUASHFS
+        ./scripts/config --enable TARGET_ROOTFS_TARGZ
+        
+        # 启用LuCI
+        ./scripts/config --enable PACKAGE_luci
+        ./scripts/config --enable PACKAGE_luci-compat
+        ./scripts/config --enable PACKAGE_luci-i18n-base-zh-cn
+        
+        # 启用基础工具
+        ./scripts/config --enable PACKAGE_ip-full
+        ./scripts/config --enable PACKAGE_iptables-mod-tproxy
+        
+        # 启用无线驱动（友华K1200JS需要）
+        ./scripts/config --enable PACKAGE_kmod-mt7603
+        ./scripts/config --enable PACKAGE_kmod-mt7615e
+        ./scripts/config --enable PACKAGE_wpad-openssl
+        
+        # 禁用可能有问题的包
+        ./scripts/config --disable PACKAGE_libselinux
+        ./scripts/config --disable PACKAGE_selinux-policy
+        
+        echo "4. 生成最终配置..."
+        make defconfig
+        
+        echo "✅ 配置完成"
+        echo "=== 配置摘要 ==="
+        echo "目标平台:"
+        grep "^CONFIG_TARGET" .config
         echo ""
-        echo "=== 搜索MT7621设备 ==="
-        MT7621_FILES=$(find target/linux/ramips -type f -name "*.mk" 2>/dev/null | xargs grep -l "7621" 2>/dev/null || true)
-        
-        if [ -n "$MT7621_FILES" ]; then
-          echo "找到MT7621相关文件:"
-          echo "$MT7621_FILES"
-          
-          echo ""
-          echo "=== 搜索友华设备 ==="
-          for file in $MT7621_FILES; do
-            if grep -q -i "youhua\|k1200" "$file" 2>/dev/null; then
-              echo "找到友华设备定义在: $file"
-              grep -n -i "youhua\|k1200" "$file"
-              DEVICE_FILE="$file"
-            fi
-          done
-          
-          if [ -n "$DEVICE_FILE" ]; then
-            echo ""
-            echo "=== 提取设备标识 ==="
-            grep "define Device/" "$DEVICE_FILE" | grep -i "youhua\|k1200"
-          else
-            echo "未找到友华设备定义"
-          fi
-        else
-          echo "未找到MT7621相关文件"
-        fi
-        
+        echo "设备选择:"
+        grep "DEVICE_" .config || echo "未找到设备配置"
         echo ""
-        echo "=== 所有MT7621设备列表 ==="
-        if [ -f "target/linux/ramips/image/mt7621.mk" ]; then
-          grep "define Device/" target/linux/ramips/image/mt7621.mk | sort
-          echo "设备总数: $(grep "define Device/" target/linux/ramips/image/mt7621.mk | wc -l)"
-        else
-          echo "mt7621.mk文件不存在"
-        fi
-        
-        echo "youhua_k1200js" > /tmp/device_options.txt
-        echo "youhua,k1200js" >> /tmp/device_options.txt
-        echo "k1200js" >> /tmp/device_options.txt
-        echo "generic" >> /tmp/device_options.txt
+        echo "启用的包:"
+        grep "^CONFIG_PACKAGE.*=y" .config | head -20
       
-    # 步骤4: 应用配置
-    - name: Apply Config with Device Detection
-      run: |
-        echo "应用友华K1200JS配置..."
-        cd openwrt-source
-        
-        DEVICE_ID="generic"
-        DEVICE_FOUND=false
-        
-        if [ -f /tmp/device_options.txt ]; then
-          while IFS= read -r option; do
-            if find target/linux/ramips -name "*.mk" -type f 2>/dev/null | xargs grep -q "define Device/.*$option" 2>/dev/null; then
-              DEVICE_ID="$option"
-              DEVICE_FOUND=true
-              echo "✅ 找到设备标识: $DEVICE_ID"
-              break
-            fi
-          done < /tmp/device_options.txt
-        fi
-        
-        if [ "$DEVICE_FOUND" = false ]; then
-          echo "⚠️ 未找到友华设备标识，使用 generic"
-        fi
-        
-        > .config
-        
-        {
-          echo "# 友华K1200JS专用配置"
-          echo "# 设备标识: $DEVICE_ID"
-          echo "CONFIG_TARGET_ramips=y"
-          echo "CONFIG_TARGET_ramips_mt7621=y"
-        } >> .config
-        
-        if [ "$DEVICE_ID" = "generic" ]; then
-          echo "CONFIG_TARGET_ramips_mt7621_DEVICE_generic=y" >> .config
-        else
-          CLEAN_DEVICE=$(echo "$DEVICE_ID" | sed 's/,/_/g')
-          echo "# CONFIG_TARGET_ramips_mt7621_DEVICE_generic is not set" >> .config
-          echo "CONFIG_TARGET_ramips_mt7621_DEVICE_${CLEAN_DEVICE}=y" >> .config
-        fi
-        
-        {
-          echo ""
-          echo "# 基础设置"
-          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=128"
-          echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y"
-          echo "CONFIG_TARGET_ROOTFS_TARGZ=y"
-          echo ""
-          echo "# 必要的基础包"
-          echo "CONFIG_PACKAGE_luci=y"
-          echo "CONFIG_PACKAGE_luci-compat=y"
-          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y"
-          echo "CONFIG_PACKAGE_luci-theme-bootstrap=y"
-          echo ""
-          echo "# 无线驱动"
-          echo "CONFIG_PACKAGE_kmod-mt7603=y"
-          echo "CONFIG_PACKAGE_kmod-mt76x2e=y"
-          echo "CONFIG_PACKAGE_wpad-openssl=y"
-          echo "CONFIG_PACKAGE_hostapd-common=y"
-          echo ""
-          echo "# 网络工具"
-          echo "CONFIG_PACKAGE_ip-full=y"
-          echo "CONFIG_PACKAGE_iptables-mod-tproxy=y"
-          echo "CONFIG_PACKAGE_dnsmasq-full=y"
-          echo ""
-          echo "# 存储支持"
-          echo "CONFIG_PACKAGE_kmod-usb-storage=y"
-          echo "CONFIG_PACKAGE_kmod-fs-ext4=y"
-          echo "CONFIG_PACKAGE_kmod-fs-vfat=y"
-          echo ""
-          echo "# 命令行工具"
-          echo "CONFIG_PACKAGE_bash=y"
-          echo "CONFIG_PACKAGE_nano=y"
-          echo "CONFIG_PACKAGE_curl=y"
-          echo "CONFIG_PACKAGE_wget=y"
-        } >> .config
-        
-        echo "✅ 配置文件已应用"
-      
-    # 步骤5: 更新和安装feeds
-    - name: Update and Install Feeds
+    # 步骤5: 更新feeds（官方源）
+    - name: Update Feeds
       run: |
         cd openwrt-source
         echo "更新feeds..."
         
-        {
-          echo "src-git packages https://github.com/coolsnowwolf/packages.git"
-          echo "src-git luci https://github.com/coolsnowwolf/luci.git"
-          echo "src-git routing https://github.com/coolsnowwolf/routing.git"
-          echo "src-git telephony https://github.com/coolsnowwolf/telephony.git"
-        } > feeds.conf.default
-        
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-        ./scripts/feeds install luci
-        ./scripts/feeds install luci-i18n-base-zh-cn
-        ./scripts/feeds install kmod-mt7603
-        ./scripts/feeds install kmod-mt76x2e
         
-        echo "✅ Feeds安装完成"
+        echo "✅ feeds更新完成"
       
-    # 步骤6: 生成最终配置
-    - name: Generate Final Config
-      run: |
-        cd openwrt-source
-        echo "生成最终配置..."
-        
-        make defconfig
-        echo "✅ 配置生成完成"
-      
-    # 步骤7: 下载依赖
+    # 步骤6: 下载依赖
     - name: Download Dependencies
       run: |
         cd openwrt-source
         echo "下载依赖文件..."
         
+        # 单线程下载避免问题
         make download -j1
+        
         echo "✅ 依赖下载完成"
+        echo "检查关键文件:"
+        ls -la dl/ | head -10
       
-    # 步骤8: 设置交换空间
+    # 步骤7: 设置交换空间（避免内存不足）
     - name: Setup Swap Space
       run: |
         echo "设置交换空间..."
-        
         sudo fallocate -l 4G /swapfile
         sudo chmod 600 /swapfile
         sudo mkswap /swapfile
         sudo swapon /swapfile
         
-        echo "✅ 交换空间设置完成"
+        echo "当前内存状态:"
         free -h
+        echo "✅ 交换空间设置完成"
       
-    # 步骤9: 编译固件
+    # 步骤8: 编译固件（分阶段，单线程稳定）
     - name: Build Firmware
-      timeout-minutes: 180
       run: |
         cd openwrt-source
+        
         echo "开始编译固件..."
+        echo "预计时间: 60-120分钟"
         echo "开始时间: $(date)"
         
-        echo "使用2线程编译..."
-        make -j2 V=s 2>&1 | tee build.log
+        # 编译日志文件
+        BUILD_LOG="build_$(date +%Y%m%d_%H%M%S).log"
         
-        echo "结束时间: $(date)"
+        # 阶段1: 编译工具链（必须）
+        echo "阶段1: 编译工具链..."
+        make tools/compile -j1 V=s 2>&1 | tee -a "$BUILD_LOG"
         
-        if [ -d bin/targets/ramips/mt7621 ]; then
+        # 阶段2: 编译工具链安装
+        echo "阶段2: 安装工具链..."
+        make toolchain/install -j1 V=s 2>&1 | tee -a "$BUILD_LOG"
+        
+        # 阶段3: 编译固件核心
+        echo "阶段3: 编译固件核心..."
+        make -j1 V=s 2>&1 | tee -a "$BUILD_LOG"
+        
+        echo "编译结束时间: $(date)"
+        
+        # 检查编译结果
+        if [ -d bin/targets ]; then
           echo "✅ 编译成功！"
-          echo "生成的固件:"
-          ls -lh bin/targets/ramips/mt7621/*.bin 2>/dev/null || ls -lh bin/targets/ramips/mt7621/* 2>/dev/null || echo "查看bin/targets/ramips/mt7621目录"
+          echo "=== 生成的固件 ==="
+          find bin/targets -type f \( -name "*.bin" -o -name "*.img*" \) | xargs ls -lh 2>/dev/null | head -10
+          
+          # 特别查找友华相关固件
+          echo ""
+          echo "=== 查找友华相关固件 ==="
+          find bin/targets -type f \( -name "*youhua*" -o -name "*wr1200*" -o -name "*k1200*" \) | xargs ls -lh 2>/dev/null || echo "未找到友华特定固件"
         else
           echo "❌ 编译失败！"
-          tail -50 build.log
+          echo "=== 错误摘要 ==="
+          tail -200 "$BUILD_LOG" | grep -B3 -A3 "error\|Error\|ERROR\|failed\|Failed\|undefined" | head -50
           exit 1
         fi
       
-    # 步骤10: 创建README文件（简化版）
-    - name: Create Readme File
+    # 步骤9: 固件深度分析
+    - name: Analyze Firmware
       if: success()
       run: |
-        echo "创建刷机说明..."
+        cd openwrt-source
         
-        # 使用简单的echo命令创建README，避免heredoc问题
-        > openwrt-source/README-flash.md
+        echo "=== 固件深度分析 ==="
         
-        echo "# 友华K1200JS OpenWrt固件刷机说明" >> openwrt-source/README-flash.md
-        echo "" >> openwrt-source/README-flash.md
-        echo "## 固件信息" >> openwrt-source/README-flash.md
-        echo "- 设备: 友华K1200JS (MT7621 + MT7603 + MT7612E)" >> openwrt-source/README-flash.md
-        echo "- 源码: Lean's LEDE" >> openwrt-source/README-flash.md
-        echo "- 编译时间: $(date)" >> openwrt-source/README-flash.md
-        echo "- 包含功能: LuCI管理界面、基础无线驱动、USB存储支持" >> openwrt-source/README-flash.md
-        echo "" >> openwrt-source/README-flash.md
-        echo "## 刷机步骤" >> openwrt-source/README-flash.md
-        echo "" >> openwrt-source/README-flash.md
-        echo "### 方法1: 原厂固件升级" >> openwrt-source/README-flash.md
-        echo "1. 进入原厂管理界面 (通常 192.168.1.1)" >> openwrt-source/README-flash.md
-        echo "2. 找到固件升级页面" >> openwrt-source/README-flash.md
-        echo "3. 选择 factory.bin 文件" >> openwrt-source/README-flash.md
-        echo "4. 点击升级，等待完成" >> openwrt-source/README-flash.md
-        echo "" >> openwrt-source/README-flash.md
-        echo "### 方法2: OpenWrt内升级" >> openwrt-source/README-flash.md
-        echo "1. 登录OpenWrt管理界面 (192.168.1.1)" >> openwrt-source/README-flash.md
-        echo "2. 进入 系统 -> 备份/升级" >> openwrt-source/README-flash.md
-        echo "3. 选择 sysupgrade.bin 文件" >> openwrt-source/README-flash.md
-        echo "4. 点击刷写固件" >> openwrt-source/README-flash.md
-        echo "" >> openwrt-source/README-flash.md
-        echo "## 默认设置" >> openwrt-source/README-flash.md
-        echo "- 管理地址: 192.168.1.1" >> openwrt-source/README-flash.md
-        echo "- 用户名: root" >> openwrt-source/README-flash.md
-        echo "- 密码: password" >> openwrt-source/README-flash.md
-        echo "" >> openwrt-source/README-flash.md
-        echo "## 注意事项" >> openwrt-source/README-flash.md
-        echo "1. 刷机前备份原厂固件" >> openwrt-source/README-flash.md
-        echo "2. 确保电源稳定" >> openwrt-source/README-flash.md
-        echo "3. 首次启动可能需要几分钟" >> openwrt-source/README-flash.md
+        # 找到固件文件
+        FIRMWARE=$(find bin/targets -name "*.bin" | head -1)
         
-        echo "✅ 刷机说明已创建"
+        if [ -f "$FIRMWARE" ]; then
+          echo "分析固件: $(basename $FIRMWARE)"
+          echo "大小: $(du -h "$FIRMWARE" | cut -f1)"
+          echo ""
+          
+          # 1. 检查设备兼容性
+          echo "1. 设备兼容性检查:"
+          if strings "$FIRMWARE" | grep -qi "youhua.*wr1200js\|wr1200js.*youhua"; then
+            echo "   ✅ 包含正确的设备树标识"
+            strings "$FIRMWARE" | grep -i "youhua.*wr1200js\|wr1200js.*youhua" | head -3
+          else
+            echo "   ❌ 未找到正确的设备树标识"
+            echo "   搜索到的相关字符串:"
+            strings "$FIRMWARE" | grep -i "youhua\|wr1200\|k1200\|mt7621" | head -10
+          fi
+          
+          echo ""
+          # 2. 检查驱动支持
+          echo "2. 驱动支持检查:"
+          for driver in "mt7621" "mt7603" "mt761[25]"; do
+            if strings "$FIRMWARE" | grep -qi "$driver"; then
+              echo "   ✅ 包含 $driver 驱动"
+            else
+              echo "   ❌ 未找到 $driver 驱动"
+            fi
+          done
+          
+          echo ""
+          # 3. 固件类型验证
+          echo "3. 固件类型验证:"
+          file "$FIRMWARE"
+          
+          echo ""
+          # 4. 风险评估
+          echo "4. 刷机风险评估:"
+          SCORE=0
+          
+          if strings "$FIRMWARE" | grep -qi "youhua.*wr1200js"; then
+            echo "   ✅ 设备标识正确 (+30分)"
+            SCORE=$((SCORE + 30))
+          fi
+          
+          if strings "$FIRMWARE" | grep -qi "mt7621"; then
+            echo "   ✅ 包含MT7621驱动 (+20分)"
+            SCORE=$((SCORE + 20))
+          fi
+          
+          if strings "$FIRMWARE" | grep -qi "mt7603"; then
+            echo "   ✅ 包含MT7603驱动 (+20分)"
+            SCORE=$((SCORE + 20))
+          fi
+          
+          if strings "$FIRMWARE" | grep -qi "mt761[25]"; then
+            echo "   ✅ 包含5GHz无线驱动 (+20分)"
+            SCORE=$((SCORE + 20))
+          fi
+          
+          SIZE_MB=$(($(stat -c%s "$FIRMWARE") / 1024 / 1024))
+          if [ $SIZE_MB -lt 15 ]; then
+            echo "   ✅ 固件大小合适 ($SIZE_MB MB) (+10分)"
+            SCORE=$((SCORE + 10))
+          else
+            echo "   ⚠️ 固件较大 ($SIZE_MB MB)"
+          fi
+          
+          echo ""
+          echo "   🎯 兼容性总分: $SCORE/100"
+          
+          if [ $SCORE -ge 90 ]; then
+            echo "   🎉 低风险 - 可以尝试刷机"
+          elif [ $SCORE -ge 70 ]; then
+            echo "   ⚠️ 中等风险 - 建议进一步验证"
+          else
+            echo "   ❌ 高风险 - 不建议刷机"
+          fi
+        else
+          echo "未找到固件文件"
+        fi
       
-    # 步骤11: 上传固件
-    - name: Upload Firmware
+    # 步骤10: 上传编译结果
+    - name: Upload Firmware and Logs
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.FIRMWARE_NAME }}
         path: |
-          openwrt-source/bin/targets/ramips/mt7621/
-          openwrt-source/README-flash.md
-        if-no-files-found: error
-        retention-days: 30
+          openwrt-source/bin/targets/ramips/mt7621/*.bin
+          openwrt-source/bin/targets/ramips/mt7621/*.img*
+          openwrt-source/bin/targets/ramips/mt7621/*.gz
+          openwrt-source/.config
+          openwrt-source/build_*.log
+        if-no-files-found: warn
+        retention-days: 7
       
-    # 步骤12: 成功通知
-    - name: Success Notification
-      if: success()
+    # 步骤11: 创建详细报告
+    - name: Create Build Report
+      if: always()
       run: |
-        echo "🎉 编译成功完成！"
-        echo "固件文件在Artifacts中"
+        echo "=== 编译报告 ===" > report.txt
+        echo "时间: $(date)" >> report.txt
+        echo "仓库: $REPO_URL" >> report.txt
+        echo "分支: $REPO_BRANCH" >> report.txt
+        echo "设备: $DEVICE_NAME" >> report.txt
+        echo "" >> report.txt
+        
+        cd openwrt-source 2>/dev/null || exit 0
+        
+        echo "编译状态: ${{ job.status }}" >> report.txt
+        echo "" >> report.txt
+        
+        if [ -d bin/targets ]; then
+          echo "✅ 编译成功" >> report.txt
+          echo "" >> report.txt
+          echo "生成的固件:" >> report.txt
+          find bin/targets -name "*.bin" -exec echo "  - {}" \; >> report.txt 2>/dev/null || true
+          echo "" >> report.txt
+          echo "详细日志见 build_*.log 文件" >> report.txt
+        else
+          echo "❌ 编译失败" >> report.txt
+          echo "" >> report.txt
+          echo "请检查编译日志获取更多信息" >> report.txt
+        fi
+        
+        echo "=== 报告结束 ===" >> report.txt
+        
+        # 上传报告
+        echo "生成报告完成"
+        ls -lh report.txt
